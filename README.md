@@ -66,9 +66,7 @@ cd dispatch && ./.venv/bin/python server.py
 
 ## ccdash — the fleet dashboard
 
-![ccdash](assets/ccdash.png)
-
-<sub>*Screenshots use synthetic demo data.*</sub>
+<p align="center"><img src="assets/ccdash.png" alt="ccdash TUI" width="480"></p>
 
 A single live TUI for everything you're running. No third-party dependencies —
 just `python3`.
@@ -90,6 +88,8 @@ python3 ~/.claude/cc-dashboard.py    # raw — shows all windows
 ## CC Dispatch — phone control
 
 <p align="center"><img src="assets/dispatch.png" alt="CC Dispatch phone UI" width="340"></p>
+
+<p align="center"><sub><em>Phone UI shown with demo data.</em></sub></p>
 
 A web app that reads and drives your **existing** Claude Code panes — from your
 phone, on the couch, away from the desk. Every pane is a **clawd** in the yard:
