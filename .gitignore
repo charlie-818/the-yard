@@ -1,0 +1,20 @@
+# Secrets & runtime state — never commit
+.credentials.json
+.token
+*.token
+audit.log
+*.log
+/tmp/cc-status/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# OS / editor
+.DS_Store
+*.bak
+*.bak-*
+*.swp

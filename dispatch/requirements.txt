@@ -1,0 +1,4 @@
+aiohttp>=3.9
+webauthn>=2.0
+iterm2>=2.7
+Pillow>=10.0
