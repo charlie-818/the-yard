@@ -320,7 +320,21 @@ _EDIT_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 # the prompt count, mirroring cc-dashboard's _NOISE filter.
 _PROMPT_NOISE = ("Caveat:", "<command-name>", "<command-message>", "<local-command",
                  "[Request interrupted", "system-reminder", "<user-prompt-submit")
-_OPS = {}   # transcript path -> {"off","files","seen","prompts","fn","pn"}
+_OPS = {}   # transcript path -> {"off","files","seen","prompts","fn","pn","action"}
+
+
+def _short_action(tool, inp):
+    """A compact arg for the fleet bubble from a tool_use input dict: the command
+    for Bash, the basename for file tools, the query/target otherwise."""
+    if tool == "Bash":
+        return (inp.get("command") or "").strip().splitlines()[0][:40] if inp.get("command") else ""
+    for k in ("file_path", "notebook_path", "path"):
+        if inp.get(k):
+            return os.path.basename(str(inp[k]).rstrip("/"))[:28]
+    for k in ("pattern", "url", "query", "description", "prompt", "subagent_type"):
+        if inp.get(k):
+            return str(inp[k]).strip().splitlines()[0][:32] if str(inp[k]).strip() else ""
+    return ""
 
 
 def session_ops(path):
@@ -339,7 +353,7 @@ def session_ops(path):
         return ((st or {}).get("fn", 0), (st or {}).get("pn", 0))
     if st is None or size < st["off"]:            # new, or shrank (compaction/clear)
         st = {"off": max(0, size - 4_000_000), "files": set(),
-              "seen": set(), "prompts": 0, "fn": 0, "pn": 0}
+              "seen": set(), "prompts": 0, "fn": 0, "pn": 0, "action": None}
     if size > st["off"]:
         try:
             with open(path, "rb") as fh:
@@ -372,12 +386,20 @@ def session_ops(path):
             if not isinstance(m, dict):
                 continue
             for b in (m.get("content") or []):
-                if (isinstance(b, dict) and b.get("type") == "tool_use"
-                        and b.get("name") in _EDIT_TOOLS):
-                    inp = b.get("input") or {}
+                if not (isinstance(b, dict) and b.get("type") == "tool_use"):
+                    continue
+                name = b.get("name")
+                inp = b.get("input") or {}
+                if name in _EDIT_TOOLS:
                     fp = inp.get("file_path") or inp.get("notebook_path")
                     if fp:
                         st["files"].add(fp)
+                # Newest tool call = what the pane is doing right now. Sourced
+                # from the transcript (structured, reliable) rather than scraped
+                # off the scrolling screen, which loses the ⏺ line under output.
+                if name:
+                    st["action"] = {"tool": name,
+                                    "arg": _short_action(name, inp)}
     st["fn"], st["pn"] = len(st["files"]), st["prompts"]
     _OPS[path] = st
     return st["fn"], st["pn"]
@@ -417,6 +439,7 @@ def read_fleet_files():
         tp = d.get("transcript_path") or ""
         out[uuid] = {
             "sid": key,
+            "transcript": tp,
             "state": state,
             # When this pane entered its current state, straight from the .state
             # file the working/idle hooks touch — the SAME clock cc-dashboard and
@@ -441,6 +464,7 @@ def read_fleet_files():
         fcount, pcount = session_ops(tp) if tp else (0, 0)
         out[uuid]["files"] = fcount
         out[uuid]["prompts"] = pcount
+        out[uuid]["action"] = (_OPS.get(tp) or {}).get("action") if tp else None
     return out
 
 
@@ -455,6 +479,69 @@ def fleet_limits(files):
             if k > best_key:
                 best_key, best = k, f.get("limits")
     return best
+
+
+# ── live working directory ─────────────────────────────────────────────────
+# The critter name tracks the dir the session is CURRENTLY in, not the launch dir.
+# Ported from cc-dashboard's latest_cwd so the phone and the TUI name panes the same.
+def tail_lines(path, n, size=524288):
+    # last n lines without reading the whole (tens-of-MB) transcript
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2); sz = f.tell()
+            f.seek(max(0, sz - size))
+            data = f.read()
+        return data.decode("utf-8", "ignore").splitlines()[-n:]
+    except OSError:
+        return []
+
+def _is_scratch(p):
+    # a temp/scratch launch dir is never the repo the session is really working in
+    return bool(p) and ("cc-scratch" in p or "/var/folders/" in p
+                        or p.startswith("/tmp") or p.startswith("/private/tmp"))
+
+def _cd_target(cmd):
+    # destination of the last absolute `cd <dir>` in a (possibly compound) command
+    best = None
+    for m in re.finditer(r'(?:^|[;&|]|&&)\s*cd\s+("([^"]+)"|\'([^\']+)\'|([^\s;&|]+))', cmd):
+        t = m.group(2) or m.group(3) or m.group(4)
+        if t and t.startswith("/"): best = t.rstrip("/")
+    return best
+
+_cwd_cache = {}   # transcript path -> ((mtime,size), cwd)
+def latest_cwd(path):
+    # The dir the session is CURRENTLY working in: normally the transcript's per-entry
+    # `cwd` (follows the session across dirs, unlike statusline's launch-pinned
+    # workspace.current_dir). A session launched in a scratch dir keeps that scratch cwd
+    # even while editing a real repo, so when cwd is scratch we recover the working dir
+    # from recent `cd /repo` moves and, failing that, the dir of the files it's touching.
+    if not path:
+        return None
+    try: st = os.stat(path)
+    except OSError: return None
+    key = (st.st_mtime, st.st_size)
+    hit = _cwd_cache.get(path)
+    if hit and hit[0] == key: return hit[1]
+    base = None; cd_hint = None; file_hint = None
+    for line in reversed(tail_lines(path, 80)):
+        try: o = json.loads(line)
+        except Exception: continue
+        if base is None and o.get("cwd"): base = o["cwd"]
+        if base and not _is_scratch(base): break
+        for b in ((o.get("message") or {}).get("content") or []):
+            if not (isinstance(b, dict) and b.get("type") == "tool_use"): continue
+            inp = b.get("input") or {}
+            if cd_hint is None and isinstance(inp.get("command"), str):
+                cd_hint = _cd_target(inp["command"])
+            fp = inp.get("file_path") or inp.get("path")
+            if file_hint is None and isinstance(fp, str) and fp.startswith("/") and not _is_scratch(fp):
+                file_hint = os.path.dirname(fp.rstrip("/"))
+        if cd_hint: break
+    cwd = base
+    if base and _is_scratch(base):
+        cwd = cd_hint or file_hint or base
+    _cwd_cache[path] = (key, cwd)
+    return cwd
 
 
 async def build_fleet():
@@ -474,11 +561,14 @@ async def build_fleet():
         lines = [l for l in txt.splitlines() if l.strip()]
         mode = detect_mode(txt)
         prompt = detect_prompt(txt)
+        # live working dir: the transcript's current cwd (follows `cd`s), then the
+        # statusline's launch-pinned dir, then the iTerm pane path — same order as ccdash
+        live_cwd = latest_cwd((f or {}).get("transcript")) or (f or {}).get("cwd") or cwd
         rows.append({
             "uuid": uuid,
             "job": job,
-            "cwd": (f or {}).get("cwd") or cwd,
-            "name": os.path.basename(((f or {}).get("cwd") or cwd).rstrip("/")) or "?",
+            "cwd": live_cwd,
+            "name": os.path.basename(live_cwd.rstrip("/")) or "?",
             "state": (f or {}).get("state", "idle"),
             "model": (f or {}).get("model", ""),
             "ctx": (f or {}).get("ctx"),
@@ -495,13 +585,174 @@ async def build_fleet():
             "age": (f or {}).get("age"),
             "dur_ms": (f or {}).get("dur_ms"),
             "work_since": (f or {}).get("state_since"),
-            "tail": lines[-3:],
+            "action": (f or {}).get("action"),   # newest tool call, from transcript
+            # Enough lines that the current `⏺ Tool(args)` action line is in the
+            # window — it sits several lines above the bottom, behind its `⎿`
+            # result, the spinner and the prompt box. The bubble distiller scans
+            # this backwards for the newest tool call to show what Claude's doing.
+            "tail": lines[-14:],
         })
     # anything blocked on a human answer outranks everything else
     rows.sort(key=lambda r: (0 if r.get("prompt") else 1,
                              {"working": 0, "idle": 1, "ended": 2}.get(r["state"], 3),
                              r["name"]))
     return rows, fleet_limits(files)
+
+
+# ── session summary (headless `claude -p`) ─────────────────────────────────
+# Two header lines for the chat view: a rolling summary of the whole session,
+# and — while the task is still running — the condition that will make it stop.
+# Generated by shelling out to `claude -p` (the local subscription, no API key).
+#
+# The summary of a run barely changes and its stop condition even less, so we do
+# NOT re-summarise on a timer. Instead we compute ONCE per user prompt — keyed on
+# the transcript's prompt count — and reuse it for the whole run. Sending a new
+# prompt bumps the count and is what triggers the next (single) summarisation,
+# fired proactively the moment the prompt goes out. Results persist to disk so a
+# restart reuses them instead of paying for a fresh call.
+_SUMMARY_FILE = HERE / ".summaries.json"
+_summary_locks = {}          # uuid -> asyncio.Lock (one claude call per pane)
+
+
+def _load_summaries():
+    try:
+        return json.loads(_SUMMARY_FILE.read_text())
+    except Exception:
+        return {}
+
+
+_summaries = _load_summaries()   # uuid -> {"prompts","summary","success","at"}
+
+
+def _save_summaries():
+    try:
+        _SUMMARY_FILE.write_text(json.dumps(_summaries))
+        _SUMMARY_FILE.chmod(0o600)
+    except Exception as e:
+        print(f"  [summary] save failed: {type(e).__name__}: {e}", flush=True)
+
+
+def _transcript_digest(path, max_chars=20000):
+    """Compact text of a session for summarisation: the opening user prompt (the
+    task) plus the tail of the conversation, so both 'what it set out to do' and
+    'what it's doing now' survive the truncation."""
+    try:
+        raw = pathlib.Path(path).read_text(errors="replace").splitlines()
+    except Exception:
+        return ""
+    msgs = []
+    for ln in raw:
+        try:
+            o = json.loads(ln)
+        except Exception:
+            continue
+        role = (o.get("message") or {}).get("role") or o.get("type")
+        content = (o.get("message") or {}).get("content")
+        if isinstance(content, list):
+            content = " ".join(
+                c.get("text", "") for c in content
+                if isinstance(c, dict) and c.get("type") == "text")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if any(n in content for n in _PROMPT_NOISE):
+            continue
+        msgs.append(f"{role}: {content.strip()}")
+    if not msgs:
+        return ""
+    first = msgs[0]
+    tail = "\n".join(msgs[1:])
+    if len(tail) > max_chars:
+        tail = "…" + tail[-max_chars:]
+    return (first + "\n" + tail)[:max_chars + 2000]
+
+
+async def _claude_summary(digest, running):
+    """Ask `claude -p` for the two lines. Returns (summary, success|None)."""
+    ask = (
+        "You are labeling a Claude Code coding session for a phone status bar. "
+        "Below is a transcript digest (first prompt, then recent messages). "
+        "Reply with EXACTLY two lines and nothing else:\n"
+        "SUMMARY: <one sentence, <=110 chars, what this session has been doing overall>\n"
+        "SUCCESS: <" + (
+            "one sentence, <=110 chars, the concrete condition that will make the "
+            "current task stop/finish>" if running else "the word NONE") + "\n\n"
+        "Transcript digest:\n" + digest)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "-p", ask,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=90)
+    except Exception as e:
+        print(f"  [summary] claude -p failed: {type(e).__name__}: {e}", flush=True)
+        return None, None
+    text = out.decode(errors="replace")
+    summary, success = None, None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.upper().startswith("SUMMARY:"):
+            summary = s.split(":", 1)[1].strip()[:140]
+        elif s.upper().startswith("SUCCESS:"):
+            v = s.split(":", 1)[1].strip()
+            success = None if v.upper() in ("NONE", "N/A", "") else v[:140]
+    return summary, success
+
+
+async def _ensure_summary(uuid, path, pcount, running):
+    """Return this run's stored summary, computing it once if the prompt count
+    moved (a new prompt = a new run to describe). One claude call per pane."""
+    entry = _summaries.get(uuid)
+    if entry and entry.get("prompts") == pcount:
+        return entry
+    lock = _summary_locks.setdefault(uuid, asyncio.Lock())
+    async with lock:
+        entry = _summaries.get(uuid)          # recheck after waiting on the lock
+        if entry and entry.get("prompts") == pcount:
+            return entry
+        digest = await asyncio.to_thread(_transcript_digest, path)
+        if not digest:
+            return entry
+        summary, success = await _claude_summary(digest, running)
+        entry = {"prompts": pcount, "summary": summary, "success": success,
+                 "at": time.time()}
+        _summaries[uuid] = entry
+        await asyncio.to_thread(_save_summaries)
+        print(f"  [summary] {uuid[:8]} summarised at prompt #{pcount}", flush=True)
+        return entry
+
+
+async def _summarise_after_send(uuid):
+    """Fire-and-forget: right after a prompt is sent, wait for Claude to write it
+    into the transcript, then compute+store this run's summary so it's ready
+    before the phone ever asks."""
+    await asyncio.sleep(2.5)
+    try:
+        f = read_fleet_files().get(uuid) or {}
+        path = f.get("transcript")
+        if not path or not os.path.exists(path):
+            return
+        _, pcount = session_ops(path)
+        await _ensure_summary(uuid, path, pcount, f.get("state") == "working")
+    except Exception as e:
+        print(f"  [summary] after-send failed: {type(e).__name__}: {e}", flush=True)
+
+
+async def api_summary(request):
+    if not authed(request):
+        return web.json_response({"error": "locked"}, status=401)
+    uuid = (request.query.get("uuid") or "").upper()
+    f = read_fleet_files().get(uuid) or {}
+    path = f.get("transcript")
+    running = f.get("state") == "working"
+    if not path or not os.path.exists(path):
+        # Pane gone — still surface the last summary we saved for it, if any.
+        e = _summaries.get(uuid) or {}
+        return web.json_response({"summary": e.get("summary"),
+                                  "success": e.get("success"), "running": False})
+    _, pcount = session_ops(path)
+    entry = await _ensure_summary(uuid, path, pcount, running) or {}
+    return web.json_response({"summary": entry.get("summary"),
+                              "success": entry.get("success"),
+                              "running": running, "prompts": pcount})
 
 
 # ── auth ───────────────────────────────────────────────────────────────────
@@ -725,10 +976,65 @@ async def api_send(request):
     if submit:
         await asyncio.sleep(0.15)
         await s.async_send_text("\r")
+        asyncio.create_task(_summarise_after_send(uuid))   # refresh the brief
     return web.json_response({"ok": True, "chars": len(text)})
 
 
-@writes("spawn")
+# Claude's input line: a `❯` prompt. A ghost auto-suggestion is rendered with a
+# NON-breaking space after the caret (❯\xa0…); text the user actually typed uses
+# a regular space (❯ …). We key off that to tell "accept Claude's suggestion"
+# apart from "submit what's already typed".
+_PROMPT_CARET = "❯"
+
+
+def _input_suggestion(text):
+    """(kind, suggestion) for the pane's input line.
+
+    kind: "ghost" with the suggested text, "typed" if there's real typed text,
+    or "empty". Ghosts can't be committed by a keystroke over the API (Tab/→ do
+    nothing), so the caller retypes the suggestion as a real prompt instead.
+    """
+    for line in reversed(text.splitlines()):
+        st = line.strip()
+        if not st.startswith(_PROMPT_CARET):
+            continue
+        rest = st[len(_PROMPT_CARET):]
+        if rest.startswith("\xa0"):
+            return "ghost", rest[1:].strip()
+        if rest.strip():
+            return "typed", rest.strip()
+        return "empty", ""
+    return "empty", ""
+
+
+@writes("send")
+async def api_submit(request):
+    """"Just send it" — the phone's ▶ with an empty box.
+
+    If Claude is showing a ghost-suggested prompt, retype it and submit (a bare
+    Enter won't: the suggestion isn't in the buffer and no accept-key commits it
+    through the API). Otherwise just press Enter to submit whatever is typed.
+    """
+    body = await request.json()
+    uuid = body.get("uuid", "").upper()
+    s = (await all_sessions()).get(uuid)
+    if not s:
+        return web.json_response({"error": "no such pane"}, status=404)
+    job = await s.async_get_variable("jobName") or ""
+    txt = await pane_text(s)
+    if not is_claude_pane(uuid, job, txt):
+        return web.json_response(
+            {"error": f"pane is running {job!r} and shows no Claude UI — refusing"},
+            status=403)
+    kind, sug = _input_suggestion(txt)
+    if kind == "ghost" and sug:
+        await s.async_send_text(sug)          # retype the suggestion as real input
+        await asyncio.sleep(0.15)
+    await s.async_send_text("\r")             # submit (typed text, or the retype)
+    asyncio.create_task(_summarise_after_send(uuid))       # refresh the brief
+    return web.json_response({"ok": True, "kind": kind, "sent": sug})
+
+
 async def _auto_trust(sess):
     """Auto-answer Claude's first-run "Do you trust the files in this folder?".
 
@@ -762,6 +1068,7 @@ async def _auto_trust(sess):
         return
 
 
+@writes("spawn")
 async def api_spawn(request):
     """Open a brand-new Claude pane in the iTerm window and hand back its UUID.
 
@@ -1152,8 +1459,10 @@ async def main(connection):
     app["TOKEN"] = TOKEN
     app.router.add_get("/", index)
     app.router.add_get("/api/fleet", api_fleet)
+    app.router.add_get("/api/summary", api_summary)
     app.router.add_post("/api/key", api_key)
     app.router.add_post("/api/send", api_send)
+    app.router.add_post("/api/submit", api_submit)
     app.router.add_post("/api/spawn", api_spawn)
     app.router.add_post("/api/kill", api_kill)
     app.router.add_post("/api/effort", api_effort)
