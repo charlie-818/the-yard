@@ -25,21 +25,49 @@ from aiohttp import web
 import webauthn
 from webauthn.helpers import base64url_to_bytes, options_to_json
 from webauthn.helpers.structs import (
-    AuthenticatorSelectionCriteria, PublicKeyCredentialDescriptor,
-    ResidentKeyRequirement, UserVerificationRequirement,
+    AuthenticatorAttachment, AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor, ResidentKeyRequirement,
+    UserVerificationRequirement,
 )
 
 HERE = pathlib.Path(__file__).parent
 CRED_FILE = HERE / ".credentials.json"
 AUDIT_FILE = HERE / "audit.log"
 
-SESSION_TTL = 12 * 3600          # absolute lifetime of a session
-IDLE_TTL = 30 * 60               # re-unlock after this long untouched
+SESSION_TTL = 30 * 24 * 3600     # absolute lifetime of a session (30 days)
+IDLE_TTL = 7 * 24 * 3600         # re-unlock after this long untouched (7 days)
 FAIL_WINDOW = 600                # rate-limit window for bad tokens
 FAIL_MAX = 5                     # bad tokens per window before a lockout
 LOCKOUT = 900
 
-SESSIONS = {}                    # sid -> session dict
+# Sessions live on disk so a server restart (or a laptop nap) doesn't log the phone
+# out — the httponly cookie the phone holds is matched back to a persisted record
+# instead of a wiped in-memory dict. Only the non-secret fields are stored; the file
+# is 0600 and git-ignored. `challenge` (a transient WebAuthn nonce) is never persisted.
+SESSIONS_FILE = HERE / ".sessions.json"
+def _load_sessions():
+    try:
+        data = json.load(open(SESSIONS_FILE))
+        return {sid: rec for sid, rec in data.items()
+                if isinstance(rec, dict) and "created" in rec}
+    except Exception:
+        return {}
+
+SESSIONS = _load_sessions()      # sid -> session dict
+_last_save = 0.0
+def save_sessions():
+    global _last_save
+    try:
+        blob = {sid: {k: s[k] for k in ("level", "ip", "created", "last") if k in s}
+                for sid, s in SESSIONS.items()}
+        tmp = str(SESSIONS_FILE) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(blob, f)
+        os.replace(tmp, SESSIONS_FILE)
+        os.chmod(SESSIONS_FILE, 0o600)
+        _last_save = time.time()
+    except Exception:
+        pass
 _FAILS = {}                      # ip -> [timestamps]
 _LOCKED = {}                     # ip -> unlock time
 
@@ -128,6 +156,7 @@ def new_session(ip, level="bootstrap"):
     now = time.time()
     SESSIONS[sid] = {"level": level, "ip": ip, "created": now, "last": now,
                      "challenge": None}
+    save_sessions()
     return sid
 
 
@@ -139,11 +168,17 @@ def get_session(request, touch=True):
     now = time.time()
     if now - s["created"] > SESSION_TTL:
         SESSIONS.pop(sid, None)
+        save_sessions()
         return None
-    if now - s["last"] > IDLE_TTL:
+    if now - s["last"] > IDLE_TTL and s["level"] != "bootstrap":
         s["level"] = "bootstrap"           # idle drops you to "unlock again"
+        save_sessions()
     if touch:
         s["last"] = now
+        # persist "last" lazily — every request would hammer the disk; a couple of
+        # minutes of drift is harmless against a 7-day idle window
+        if now - _last_save > 120:
+            save_sessions()
     s["sid"] = sid
     return s
 
@@ -218,6 +253,9 @@ async def register_begin(request):
         rp_id=rid, rp_name="CC Dispatch",
         user_id=USER_ID, user_name=USER_NAME, user_display_name="Yard owner",
         authenticator_selection=AuthenticatorSelectionCriteria(
+            # Bind to the phone's built-in biometric (Face ID / Touch ID) rather
+            # than offering a roaming security key — this is a single-phone app.
+            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
             resident_key=ResidentKeyRequirement.PREFERRED,
             user_verification=UserVerificationRequirement.REQUIRED),
         exclude_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["id"]))
@@ -247,7 +285,7 @@ async def register_complete(request):
         "added": time.strftime("%Y-%m-%d %H:%M"),
     })
     save_creds(creds)
-    s["level"] = "verified"; s["challenge"] = None
+    s["level"] = "verified"; s["challenge"] = None; save_sessions()
     audit(request, "passkey.register", {"rp": rp_id(request)})
     print(f"  [auth] passkey registered for {rp_id(request)}", flush=True)
     return web.json_response({"ok": True})
@@ -309,7 +347,7 @@ async def login_complete(request):
         if c["id"] == raw_id:
             c["sign_count"] = v.new_sign_count
     save_creds(creds)
-    s["level"] = "verified"; s["challenge"] = None; s["last"] = time.time()
+    s["level"] = "verified"; s["challenge"] = None; s["last"] = time.time(); save_sessions()
     audit(request, "passkey.login")
     return web.json_response({"ok": True})
 
@@ -355,6 +393,7 @@ async def whoami(request):
 async def logout(request):
     sid = request.cookies.get("sid") if request.cookies else None
     SESSIONS.pop(sid or "", None)
+    save_sessions()
     audit(request, "logout")
     r = web.json_response({"ok": True})
     r.del_cookie("sid", path="/")

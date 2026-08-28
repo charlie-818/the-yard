@@ -55,6 +55,16 @@
   .brand .wm b{font-weight:700;color:#d77757}
   header .back{font:600 24px/1 var(--ui);color:var(--dim);padding:6px 12px 6px 0;margin:-6px 0;cursor:pointer}
   .meta{font:11px var(--mono);color:var(--dim);flex:none}
+  /* Two-line session brief under the chat header: overall summary + (while
+     running) the condition that ends the task. */
+  .sessinfo{padding:8px 14px;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;flex-direction:column;gap:3px}
+  .sessinfo .ss-sum{font:12px/1.4 var(--ui);color:var(--fg)}
+  .sessinfo .ss-goal{font:11px/1.4 var(--ui);color:var(--dim);
+    display:flex;gap:6px;align-items:baseline}
+  .sessinfo .ss-goal::before{content:"⏹";color:var(--st-warn);flex:none;
+    font-size:10px}
+  .sessinfo.loading .ss-sum{color:var(--dim);font-style:italic}
   /* hard-refresh: forces a full page reload so a stale JS shell can't linger */
   header .hardref{flex:none;background:none;border:1px solid var(--line);
     border-radius:6px;color:var(--dim);font:15px/1 var(--ui);width:30px;height:30px;
@@ -240,7 +250,7 @@
   .trash.hot{border-color:var(--red);border-style:solid;color:var(--red);
     background:rgba(255,107,97,.18);transform:translateX(-50%) scale(1.14)}
 
-  .critter{position:absolute;left:0;top:0;width:80px;height:100px;
+  .critter{position:absolute;left:0;top:0;width:80px;height:100px;z-index:4;
     transform:translate(-999px,-999px);cursor:pointer;touch-action:none;
     user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
     display:flex;flex-direction:column;align-items:center;will-change:transform}
@@ -278,6 +288,10 @@
     animation:cwave .4s ease-in-out infinite}
   @keyframes cwave{50%{transform:rotate(-115deg)}}
   .critter.left .stage{transform:scaleX(-1)}
+  /* Only the clawd should face-flip; the context ring must not mirror with him
+     (its fill would then grow the wrong way). Counter the parent flip so the
+     arc always reads left-to-right regardless of which way he's walking. */
+  .critter.left .ring{transform:translateX(-50%) scaleX(-1)}
 
   .glow{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);
     width:52px;height:14px;border-radius:50%;filter:blur(6px);opacity:0;transition:opacity .3s}
@@ -289,8 +303,8 @@
     max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     text-align:center;padding:1px 6px;border-radius:4px;background:rgba(20,23,27,.72)}
   .working .ctag{color:var(--fg)}.waiting .ctag{color:var(--red)}
-  /* how long this pane's current working spell has run, ticking live. Only the
-     working clawds show it — an idle or waiting pane has no clock running. */
+  /* how long this pane has held its current state, ticking live. Working and
+     idle clawds show it (different colours below); a waiting pane does not. */
   .wtimer{display:none;margin-top:2px;font:600 10px var(--mono);
     letter-spacing:.04em;color:#2a1206;background:var(--amber);
     padding:1px 6px;border-radius:4px;text-align:center;
@@ -299,7 +313,11 @@
     border-radius:50%;background:#2a1206;margin-right:4px;vertical-align:middle;
     animation:tpulse 1.1s ease-in-out infinite}
   @keyframes tpulse{0%,100%{opacity:1}50%{opacity:.3}}
-  .working .wtimer{display:inline-block}
+  .working .wtimer,.idle .wtimer{display:inline-block}
+  /* idle clawds show how long they've snoozed — a calm slate chip, no pulse, so
+     it reads as "resting", not "running". */
+  .idle .wtimer{color:#9fb0c4;background:#2b3440;box-shadow:none}
+  .idle .wtimer::before{display:none}
   @media (prefers-reduced-motion:reduce){.wtimer::before{animation:none}}
 
   .bubble{position:absolute;left:50%;bottom:104px;transform:translateX(-50%) scale(.9);
@@ -317,6 +335,35 @@
   .waiting .bubble .verb{color:var(--red)}
   @media (prefers-reduced-motion:reduce){
     .stage,.clawd,.limb,.glow{animation:none!important}}
+
+  /* ── game layer: identity band, pet reaction, idle life ──
+     A forehead band tinted by a hash of the pane name gives every clawd a stable
+     colour you learn to recognise. The pet is pure joy. */
+  .clawd .band{transition:fill .3s}
+  .clawd{transition:transform .35s ease}
+  .ctag .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:92px}
+  /* idle clawd settles — a small squat that reads as sitting down */
+  .critter.resting .clawd{transform:translateX(-50%) translateY(4px) scaleY(.9)}
+
+  /* floating emote (hearts on a pet) */
+  .fx{position:absolute;margin-left:-8px;margin-top:-8px;pointer-events:none;
+    z-index:12;font-size:15px;line-height:1;will-change:transform,opacity;
+    animation:fxup 1s ease-out forwards}
+  @keyframes fxup{0%{opacity:0;transform:translate(0,0) scale(.4)}
+    15%{opacity:1}100%{opacity:0;transform:translate(var(--dx,0),-46px) scale(1.15)}}
+  /* the little joy-jump when you pet him */
+  .critter.petting .clawd{animation:cpet .52s ease}
+  @keyframes cpet{0%,100%{transform:translateX(-50%) translateY(0)}
+    28%{transform:translateX(-50%) translateY(-15px)}
+    56%{transform:translateX(-50%) translateY(0)}
+    76%{transform:translateX(-50%) translateY(-6px)}}
+  /* a small idle fidget-hop, so a resting clawd still looks alive */
+  .critter.fidget .clawd{animation:cfidget .5s ease}
+  @keyframes cfidget{0%,100%{transform:translateX(-50%) translateY(0)}
+    45%{transform:translateX(-50%) translateY(-6px)}}
+  @media (prefers-reduced-motion:reduce){
+    .fx{animation-duration:.6s}
+    .critter.petting .clawd,.critter.fidget .clawd{animation:none}}
 
   /* ── usage ─────────────────────────────────────────
      Chart hues from the validated dark set: blue #3987e5 (primary sequential),
@@ -355,9 +402,11 @@
   .meter{margin-bottom:11px;min-width:0}
   .meter:last-child{margin-bottom:0}
   .meter .top{display:flex;justify-content:space-between;align-items:baseline;
-    gap:8px;font:12px var(--ui);color:var(--dim);margin-bottom:5px}
-  .meter .top > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    gap:8px;margin-bottom:5px}
+  .meter .top .k{font:600 10px var(--ui);color:var(--dim);letter-spacing:.09em;
+    text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .meter .top b{flex:none;font:700 14px var(--mono);color:var(--fg)}
+  .meter .rst{font:11px/1.4 var(--mono);color:var(--dimmer);margin-top:4px}
   .track{height:12px;border-radius:2px;background:var(--line2);overflow:hidden;
     max-width:100%;box-sizing:border-box;flex:none}
   .track i{display:block;height:100%;border-radius:2px;transition:width .5s}
@@ -468,6 +517,10 @@
     <button class="hdrbtn" id="ctrlbtn" onclick="toggleChips()"
             aria-label="controls" aria-expanded="false">•••</button>
   </header>
+  <div class="sessinfo" id="sessinfo" hidden>
+    <div class="ss-sum" id="ss-sum"></div>
+    <div class="ss-goal" id="ss-goal" hidden></div>
+  </div>
   <div class="chips" id="chips">
     <button id="chip-mode"   onclick="openSheet('mode')">auto</button>
     <button id="chip-effort" onclick="openSheet('effort')">med</button>
@@ -593,6 +646,7 @@ const CLAWD_SVG = `
   <rect class="body"  x="7" y="6" width="30" height="24" rx="7"/>
   <rect class="eye" x="14" y="15" width="6" height="7" rx="2"/>
   <rect class="eye" x="24" y="15" width="6" height="7" rx="2"/>
+  <rect class="band" x="7" y="8" width="30" height="4.5" rx="2.25" fill="transparent"/>
 </svg>`;
 const RING_LEN = 60;                                  // path length of the ctx arc
 const reduceMotion = matchMedia('(prefers-reduced-motion:reduce)').matches;
@@ -609,22 +663,37 @@ const TOOL_RE = /^\s*[⏺●]\s*([A-Za-z]+)\((.*?)\)/;
 const VERBS = {Edit:'editing',MultiEdit:'editing',Write:'writing',Read:'reading',
   Bash:'running',Grep:'searching',Glob:'searching',Task:'dispatching',
   WebFetch:'fetching',WebSearch:'searching'};
-function shortArg(a){
+function shortArg(tool, a){
+  a = a.trim().replace(/^["']|["']$/g,'');
+  // Bash: show the command itself — that's the useful bit. File tools: just the
+  // basename so a long path doesn't bury which file it is.
+  if (tool === 'Bash' || tool === 'Task') return a.slice(0, 30);
   a = a.split(',')[0].trim().replace(/^["']|["']$/g,'');
-  const p = a.split('/'); return (p[p.length-1] || a).slice(0,24);
+  const p = a.split('/'); return (p[p.length-1] || a).slice(0, 24);
 }
 function activity(s){
   const st = stateOf(s);
   if (st === 'waiting') return {verb:'!', rest:(s.prompt && s.prompt.question) || 'needs an answer'};
   if (st === 'ended')   return {verb:'', rest:'done'};
+  if (st === 'idle')    return {verb:'', rest:'idle'};
+  // Working: the newest tool call from the transcript is authoritative — the
+  // screen scrape lost it under tool output. Fall back to the scrape, then to a
+  // plain thinking/working, only when there's no transcript action yet.
+  if (s.action && s.action.tool){
+    const v = VERBS[s.action.tool] || s.action.tool.toLowerCase();
+    return {verb:v, rest:s.action.arg || ''};
+  }
   const lines = (s.tail || []).filter(x => x.trim() && !YARD_NOISE.test(x));
   for (let i = lines.length - 1; i >= 0; i--){
     const m = lines[i].match(TOOL_RE);
-    if (m) return {verb:VERBS[m[1]] || m[1].toLowerCase(), rest:shortArg(m[2])};
+    if (m) return {verb:VERBS[m[1]] || m[1].toLowerCase(), rest:shortArg(m[1], m[2])};
   }
-  if (st === 'idle') return {verb:'', rest:'idle'};
-  const last = (lines.slice(-1)[0] || '').replace(/^[\s✻✽*⏺●⎿❯>]+/,'').slice(0,36);
-  return {verb:'', rest:last || 'working'};
+  // Working, but no recognised tool line in view. Do NOT echo the last raw
+  // screen line — mid-run that's a spinner, a wrapped sentence or tool output,
+  // which reads as random noise. Say "thinking" when Claude's spinner glyph is
+  // up, otherwise a plain "working".
+  const spinner = lines.some(l => /^\s*[✻✽·]/.test(l));
+  return {verb:'', rest: spinner ? 'thinking' : 'working'};
 }
 function bubbleHTML(s){
   const a = activity(s);
@@ -641,7 +710,8 @@ function syncCritters(rows){
     const dash = ((s.ctx || 0) / 100 * RING_LEN).toFixed(1);   // ring = ctx used
     c.fill.setAttribute('stroke-dasharray', `${dash} 200`);
     c.fill.setAttribute('stroke', ctxColor(s.ctx || 0));
-    c.tag.textContent = s.name;
+    c.nm.textContent = s.name;
+    paintIdentity(c);
   });
   for (const [uuid, c] of CRITTERS){          // panes that vanished walk off
     if (!seen.has(uuid)){ c.el.remove(); CRITTERS.delete(uuid); }
@@ -653,6 +723,106 @@ function fmtDur(sec){
   const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
   if (h) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+/* ── game layer ─────────────────────────────────────
+   A forehead band, tinted by a stable hash of the pane name, gives every clawd a
+   colour you learn to recognise in a busy yard. The pet is pure joy — it doesn't
+   touch real state. */
+// FNV-1a hash → a stable 32-bit number, so the same repo always maps the same way
+function hashStr(str){
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+// A curated bandana palette — hand-picked to be maximally distinct on the dark
+// yard (spread around the wheel, varied lightness) instead of a raw hue hash,
+// which used to bunch several crews into look-alike teals. Repo → stable colour.
+const BAND_COLORS = [
+  'hsl(2 84% 61%)',    // red
+  'hsl(28 90% 55%)',   // orange
+  'hsl(45 95% 55%)',   // amber
+  'hsl(60 88% 60%)',   // yellow
+  'hsl(96 66% 52%)',   // lime
+  'hsl(150 62% 46%)',  // green
+  'hsl(176 72% 40%)',  // teal (deep, dark)
+  'hsl(190 90% 57%)',  // cyan (bright, light)
+  'hsl(220 86% 62%)',  // blue (vivid, mid)
+  'hsl(255 74% 73%)',  // periwinkle (pale)
+  'hsl(288 62% 62%)',  // violet
+  'hsl(318 76% 62%)',  // magenta
+  'hsl(336 86% 67%)',  // pink
+  'hsl(22 46% 46%)',   // brown
+];
+// Assign colours so crews on the yard together are always different: each new
+// repo takes whichever palette colour is currently least used, so the first 14
+// crews are guaranteed distinct (no two hashing to the same cyan). The choice is
+// remembered for the session, so a repo keeps its bandana across reconnects.
+const bandAssign = new Map();          // gkey → colour, stable for the session
+function bandColor(key){
+  let col = bandAssign.get(key);
+  if (col) return col;
+  const counts = new Map(BAND_COLORS.map(c => [c, 0]));
+  bandAssign.forEach(c => counts.set(c, counts.get(c) + 1));
+  const off = hashStr(key) % BAND_COLORS.length;   // vary which colour crews start from
+  let best = BAND_COLORS[off], bestN = Infinity;
+  for (let i = 0; i < BAND_COLORS.length; i++){
+    const c = BAND_COLORS[(i + off) % BAND_COLORS.length], n = counts.get(c);
+    if (n < bestN){ bestN = n; best = c; }
+  }
+  bandAssign.set(key, best);
+  return best;
+}
+
+/* a floating emote above a clawd's head (yard-relative, same space as his x/y) */
+function fx(c, glyph, dur){
+  if (c.x == null) return;
+  const el = document.createElement('div');
+  el.className = 'fx'; el.textContent = glyph;
+  el.style.left = (c.x + 40) + 'px'; el.style.top = (c.y + 16) + 'px';
+  el.style.setProperty('--dx', ((Math.random()*2 - 1) * 22).toFixed(0) + 'px');
+  if (dur) el.style.animationDuration = dur + 'ms';
+  document.getElementById('yard').appendChild(el);
+  setTimeout(() => el.remove(), dur || 1000);
+}
+function fxBurst(c, glyph, n){ for (let i = 0; i < n; i++) setTimeout(() => fx(c, glyph), i * 70); }
+
+/* a quick tap opens the pane; a double-tap pets him — a happy jump + a few hearts */
+function tapClawd(c){
+  if (Date.now() - dragEndedAt < 400) return;      // a drop is not a tap
+  c._taps = (c._taps || 0) + 1;
+  if (c._taps === 1){
+    c._tapT = setTimeout(() => { c._taps = 0; buzz(8); openSession(c.uuid); }, 250);
+  } else {
+    clearTimeout(c._tapT); c._taps = 0; petClawd(c);
+  }
+}
+/* a quick spontaneous hop while idling — no touch needed, just liveliness */
+function fidget(c){
+  c._fid = false;
+  requestAnimationFrame(() => { c._fid = true;
+    setTimeout(() => { c._fid = false; }, 480); });
+}
+function petClawd(c){
+  buzz(14);
+  c._pet = false;                                    // retrigger cleanly on a rapid re-pet
+  requestAnimationFrame(() => { c._pet = true;
+    setTimeout(() => { c._pet = false; }, 540); });
+  fxBurst(c, '❤', 3);
+  c.greet = 0;                                       // don't wave right after a pet
+}
+
+/* every pane in the same repo is one crew: they share a band colour and flock
+   together. The key is the working directory (falls back to the name). */
+function groupKey(s){ return s.cwd || s.name || ''; }
+
+/* repo-colour on the forehead band — the whole crew wears the same one */
+function paintIdentity(c){
+  c.gkey = groupKey(c.s);
+  const col = bandColor(c.gkey);
+  if (c._bandc !== col){ c._bandc = col;
+    const band = c.el.querySelector('.band');
+    if (band) band.style.fill = col; }
 }
 
 function spawnCritter(s){
@@ -667,19 +837,20 @@ function spawnCritter(s){
        </svg>
      </div>
      <div class="bubble"></div>
-     <div class="ctag"></div>
+     <div class="ctag"><span class="nm"></span></div>
      <div class="wtimer"></div>`;
-  el.onclick = () => {
-    if (Date.now() - dragEndedAt < 400) return;   // the drop is not also a tap
-    buzz(8); openSession(s.uuid);
-  };
+  el.onclick = () => tapClawd(CRITTERS.get(s.uuid));
   document.getElementById('yard').appendChild(el);
   const c = {
     uuid:s.uuid, s, el,
     stage:el.querySelector('.stage'), bubble:el.querySelector('.bubble'),
-    fill:el.querySelector('.fill'), tag:el.querySelector('.ctag'),
+    fill:el.querySelector('.fill'), nm:el.querySelector('.nm'),
     wtimer:el.querySelector('.wtimer'), _wt:'',
     x:null, y:0, vx:0, vy:0, facing:1, next:0, greet:0, bubbleOn:false, _cls:'', _sc:'',
+    _bhtml:'', _bat:0,          // last announced command + when, for the bubble
+    _fling:false, gkey:groupKey(s),
+    pace: 0.7 + Math.random() * 0.7,   // personal walking speed — no two alike
+    wvx: 0, wvy: 0,             // his own wander heading (separate from cohesion)
     tx:null, ty:0,
     drag:false,
   };
@@ -704,6 +875,7 @@ function overTrash(x, y){
 function attachDrag(c){
   const el = c.el, trash = document.getElementById('trash');
   let hold = null, sx = 0, sy = 0, on = false;
+  let lmx = 0, lmy = 0, lmt = 0, fvx = 0, fvy = 0;   // recent pointer velocity, for the fling
 
   const place = (x, y) => {
     const r = document.getElementById('yard').getBoundingClientRect();
@@ -719,7 +891,8 @@ function attachDrag(c){
   el.addEventListener('pointerdown', e => {
     sx = e.clientX; sy = e.clientY;
     hold = setTimeout(() => {
-      on = true; c.drag = true; buzz(30);
+      on = true; c.drag = true; c._fling = false; buzz(30);
+      lmx = sx; lmy = sy; lmt = Date.now(); fvx = fvy = 0;
       el.classList.add('dragging');
       trash.classList.add('on');
       try { el.setPointerCapture(e.pointerId); } catch(_){}
@@ -734,6 +907,9 @@ function attachDrag(c){
       return;
     }
     e.preventDefault();
+    const t = Date.now(), d = Math.max(1, t - lmt);   // track release velocity for the fling
+    fvx = (e.clientX - lmx) / d; fvy = (e.clientY - lmy) / d;
+    lmx = e.clientX; lmy = e.clientY; lmt = t;
     place(e.clientX, e.clientY);
     const hot = overTrash(e.clientX, e.clientY);
     trash.classList.toggle('hot', hot);
@@ -747,7 +923,14 @@ function attachDrag(c){
     on = false; c.drag = false; dragEndedAt = Date.now();
     el.classList.remove('dragging', 'doomed');
     trash.classList.remove('on', 'hot');
-    if (e.type !== 'pointercancel' && overTrash(e.clientX, e.clientY)) askKill(c);
+    if (e.type === 'pointercancel') return;
+    if (overTrash(e.clientX, e.clientY)){ askKill(c); return; }
+    // released in the open: hand him the flick's momentum so he skids to a stop
+    const K = 16.7, cap = 15;                          // px/ms → px/frame, clamped
+    if (Date.now() - lmt > 90){ fvx = fvy = 0; }       // a held-still release is not a throw
+    c.vx = Math.max(-cap, Math.min(cap, fvx * K));
+    c.vy = Math.max(-cap, Math.min(cap, fvy * K * 0.6));
+    if (Math.abs(c.vx) + Math.abs(c.vy) > 1.4){ c._fling = true; c.next = 0; buzz(10); }
   };
   el.addEventListener('pointerup', drop);
   el.addEventListener('pointercancel', drop);
@@ -774,6 +957,11 @@ async function killPane(uuid, name){
    front-to-back, matching the perspective — so all distances squash y by SQUAT. */
 const CLAWD_GAP = 66;                  // closest two clawds ever stand (feet)
 const SQUAT = 1.6;                     // y compressed this much in every distance
+// A clawd is not just his sprite: his name chip (up to ~92px) and the timer sit
+// below him. Treat the whole thing as a box and never let two boxes overlap, so
+// neither the clawds NOR their labels ever cover each other.
+const FOOT_W = 98;                     // min horizontal gap: nameplate width + margin
+const FOOT_H = 88;                     // min vertical gap: head-top down to timer bottom
 
 /* Usable ground: the box origin ranges the feet can occupy without a clawd
    clipping the header or the tab bar. One definition, used by placement,
@@ -804,30 +992,46 @@ function placeClawds(W, H){
     const j = Math.floor(Math.random() * (i + 1)); [free[i], free[j]] = [free[j], free[i]];
   }
   need.forEach((c, i) => {
+    // if this pane's crew is already on the yard, drop him beside them rather
+    // than in a far grid cell — the flock stays a flock through reconnects
+    const crew = [...CRITTERS.values()].filter(o => o.x != null && o.gkey === c.gkey);
+    if (crew.length){
+      const mx = crew.reduce((a, o) => a + o.x, 0) / crew.length;
+      const my = crew.reduce((a, o) => a + o.y, 0) / crew.length;
+      c.x = Math.min(Math.max(mx + (Math.random()*2-1)*FOOT_W, b.x0), b.x1);
+      c.y = Math.min(Math.max(my + (Math.random()*2-1)*FOOT_H, b.y0), b.y1);
+      return;
+    }
     const [cX, r] = free[i % free.length] || [i % cols, Math.floor(i / cols) % rows];
     c.x = b.x0 + (cX + 0.22 + Math.random() * 0.56) * cw;
     c.y = b.y0 + (r  + 0.22 + Math.random() * 0.56) * ch;
   });
 }
 
-/* Push overlapping clawds apart (feet, not heads). Several relaxation passes so
-   a tight knot fully unpacks in one frame instead of oozing apart over many;
-   the edge clamp is inside the loop so a clawd pinned to the wall still gives
-   ground sideways rather than staying stuck in someone. */
+/* Keep every clawd's box (sprite + name + timer) clear of every other's. Each
+   pair is an axis-aligned overlap test; we shove them apart along whichever axis
+   they overlap least, so neither the clawds nor their labels ever cover one
+   another. Several relaxation passes unpack a tight knot in a single frame; the
+   edge clamp is inside the loop so a wall-pinned clawd still gives ground. */
 function resolveCollisions(W, H){
   const arr = [...CRITTERS.values()].filter(c => c.x != null && !c.drag);
   const b = bounds(W, H);
-  for (let pass = 0; pass < 4; pass++){
+  for (let pass = 0; pass < 6; pass++){
     for (let i = 0; i < arr.length; i++){
       for (let j = i + 1; j < arr.length; j++){
         const a = arr[i], q = arr[j];
-        let dx = q.x - a.x, dy = (q.y - a.y) * SQUAT;
-        let d = Math.hypot(dx, dy);
-        if (d >= CLAWD_GAP) continue;
-        if (d < 0.01){ dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = 0.5; }
-        const push = (CLAWD_GAP - d) / 2, ux = dx / d, uy = dy / d;
-        a.x -= ux * push; a.y -= uy * push / SQUAT;
-        q.x += ux * push; q.y += uy * push / SQUAT;
+        const dx = q.x - a.x, dy = q.y - a.y;
+        const ox = FOOT_W - Math.abs(dx), oy = FOOT_H - Math.abs(dy);
+        if (ox <= 0 || oy <= 0) continue;         // already clear on one axis
+        if (ox < oy){                             // less overlap sideways → part sideways
+          let s = (dx < 0 ? -ox : ox) / 2;
+          if (dx === 0) s = (Math.random() < 0.5 ? -ox : ox) / 2;
+          a.x -= s; q.x += s;
+        } else {                                  // less overlap vertically → part vertically
+          let s = (dy < 0 ? -oy : oy) / 2;
+          if (dy === 0) s = (Math.random() < 0.5 ? -oy : oy) / 2;
+          a.y -= s; q.y += s;
+        }
       }
     }
     arr.forEach(c => {
@@ -847,6 +1051,51 @@ function tick(t){
 
   if (liveView) placeClawds(W, H);               // spread any newcomers first
 
+  // ── flock bookkeeping: each repo is a crew ──────────
+  // Sum every crew's position for its centre (cohesion pulls members toward it)
+  // just the crew's centre of mass — a WEAK pull toward it keeps a repo loosely
+  // together, but each clawd still wanders on his own (no shared marching order).
+  const CEN = new Map();                          // repo key → {cx, cy, n}
+  CRITTERS.forEach(c => {
+    if (c.x == null) return;
+    let g = CEN.get(c.gkey);
+    if (!g){ g = {sx:0, sy:0, n:0}; CEN.set(c.gkey, g); }
+    g.sx += c.x; g.sy += c.y; g.n++;
+  });
+  CEN.forEach(g => { g.cx = g.sx / g.n; g.cy = g.sy / g.n; });
+
+  // ── speech-bubble arbitration ───────────────────────
+  // Bubbles are wide and float above the crowd, so two side-by-side clawds would
+  // cover each other. Pick a non-overlapping set: a waiting clawd (needs you)
+  // always wins, then the freshest working ones, and anyone whose bubble would
+  // land on an already-chosen one stays quiet this frame.
+  // A bubble is drawn centred on the clawd, ~58px above his box origin. To keep
+  // it off everything, a shown bubble must clear every OTHER clawd's whole box
+  // (sprite + name + timer) and every already-shown bubble. Waiting clawds are
+  // exempt from the body test — the one that needs you always gets to speak.
+  const BUB_DX = 150, BUB_DY = 44;            // bubble↔bubble min centre gap
+  const OB_DX = 124, OB_DY = 65, OB_YOFF = 103;  // bubble↔clawd-box overlap window
+  const wants = [];
+  CRITTERS.forEach(c => {
+    c._okB = false;
+    if (c.x == null || c.drag) return;
+    if (c.state === 'waiting'){ c._prB = 2; wants.push(c); }
+    else if (c.state === 'working'){
+      const html = bubbleHTML(c.s);           // keep the "announce once" window ticking
+      if (html !== c._bhtml){ c._bhtml = html; c._bat = now; c.bubble.innerHTML = html; }
+      if (now - c._bat < 4){ c._prB = 1; wants.push(c); }
+    }
+  });
+  wants.sort((a, b) => b._prB - a._prB || b._bat - a._bat);   // waiting first, then freshest
+  const shownB = [];
+  wants.forEach(c => {
+    const hitsBody = c.state !== 'waiting' && [...CRITTERS.values()].some(o =>
+      o !== c && o.x != null && !o.drag &&
+      Math.abs(o.x - c.x) < OB_DX && Math.abs((o.y - c.y) + OB_YOFF) < OB_DY);
+    const hitsBub = shownB.some(o => Math.abs(o.x - c.x) < BUB_DX && Math.abs(o.y - c.y) < BUB_DY);
+    if (!hitsBody && !hitsBub){ c._okB = true; shownB.push(c); }
+  });
+
   CRITTERS.forEach(c => {
     const s = c.s, st = c.state;
     if (c.drag) return;                          // the finger owns him right now
@@ -854,21 +1103,53 @@ function tick(t){
 
     // heavier context → slower crawl (a loaded clawd trudges)
     const speed = (0.35 + (1 - (s.ctx || 0) / 100) * 0.5) * (st === 'working' ? 1 : 0.5);
-    if (st === 'working' || st === 'idle'){
-      if (now > c.next){                          // re-roll a wander heading
-        c.next = now + (st === 'idle' ? 2 + Math.random()*4 : 1 + Math.random()*2);
-        const ang = Math.random() * Math.PI * 2;
-        c.vx = Math.cos(ang) * speed; c.vy = Math.sin(ang) * speed * 0.6;
-        if (st === 'idle' && Math.random() < 0.4){ c.vx = c.vy = 0; }
+    if (c._fling){
+      // a thrown clawd coasts and skids to rest; walls still bounce him (below)
+      c.vx *= 0.90; c.vy *= 0.90;
+      if (Math.abs(c.vx) + Math.abs(c.vy) < 0.15){ c._fling = false; c.vx = c.vy = 0; }
+    } else if (st === 'working' || st === 'idle'){
+      // ── his own wander — each clawd on his own clock, heading, speed ──
+      // Every roll picks a fresh random heading; sometimes he just stops to
+      // look around. His personal pace (set at birth) keeps crewmates from
+      // moving in sync, so a repo reads as individuals milling, not a machine.
+      if (now > c.next){
+        c.next = now + (st === 'idle' ? 1.1 + Math.random() * 3.4
+                                      : 0.6 + Math.random() * 2.2);
+        if (st === 'idle' && Math.random() < 0.34){
+          c.wvx = c.wvy = 0;                       // pause & look around
+          if (Math.random() < 0.5) c.facing = -c.facing;
+          if (!reduceMotion && Math.random() < 0.45) fidget(c);   // little hop
+        } else {
+          const ang = Math.random() * Math.PI * 2;
+          const sp = speed * (0.55 + Math.random() * 1.0) * c.pace;
+          c.wvx = Math.cos(ang) * sp; c.wvy = Math.sin(ang) * sp * 0.6;
+        }
       }
-      // aware of each other: steer away from a neighbour before touching him,
-      // so they part like people in a room, not billiard balls after impact
+      // weak, loose leash back to the crew — only once he's really strayed, and
+      // gentle enough that it never overrides his own wandering
+      let cvx = 0, cvy = 0;
+      const g = CEN.get(c.gkey);
+      if (g){
+        const hx = g.cx - c.x, hy = g.cy - c.y, hd = Math.hypot(hx, hy * SQUAT);
+        if (hd > 130){ const k = Math.min(0.3, (hd - 130) / 500) * speed;
+          cvx = hx / hd * k; cvy = hy / hd * k * 0.6; }
+      }
+      // a little live jitter every frame so nobody glides on rails
+      const jx = (Math.random() * 2 - 1) * 0.06 * speed;
+      const jy = (Math.random() * 2 - 1) * 0.04 * speed;
+      const dvx = c.wvx + cvx + jx, dvy = c.wvy + cvy + jy;
+      // ease toward the target — snappy enough to feel lively, not teleporting
+      c.vx += (dvx - c.vx) * 0.18; c.vy += (dvy - c.vy) * 0.18;
+      // still keep personal space — steer off anyone whose box we're nearing
       CRITTERS.forEach(o => {
         if (o === c || o.x == null) return;
-        const dx = c.x - o.x, dy = (c.y - o.y) * SQUAT, d = Math.hypot(dx, dy);
-        if (d > 0.01 && d < CLAWD_GAP * 1.7){
-          const f = (1 - d / (CLAWD_GAP * 1.7)) * 0.18;
-          c.vx += dx / d * f; c.vy += dy / d * f / SQUAT;
+        const dx = c.x - o.x, dy = c.y - o.y;
+        const nx = Math.abs(dx) / (FOOT_W * 1.4), ny = Math.abs(dy) / (FOOT_H * 1.4);
+        const d = Math.hypot(nx, ny);
+        if (d > 0.01 && d < 1){
+          const f = (1 - d) * 0.22;
+          c.vx += (dx / (Math.abs(dx) + Math.abs(dy) + 1)) * f * 2;
+          c.vy += (dy / (Math.abs(dx) + Math.abs(dy) + 1)) * f;
         }
       });
     } else { c.vx = c.vy = 0; }                   // waiting / ended hold position
@@ -881,7 +1162,10 @@ function tick(t){
     if (Math.abs(c.vx) > 0.01) c.facing = c.vx < 0 ? -1 : 1;
 
     const moving = Math.abs(c.vx) + Math.abs(c.vy) > 0.05;
-    const cls = 'critter ' + st + (c.facing < 0 ? ' left' : '');
+    const resting = st === 'idle' && Math.abs(c.vx) + Math.abs(c.vy) < 0.03;
+    const cls = 'critter ' + st + (c.facing < 0 ? ' left' : '')
+              + (resting ? ' resting' : '') + (c._pet ? ' petting' : '')
+              + (c._fid ? ' fidget' : '');
     if (cls !== c._cls){ c.el.className = cls; c._cls = cls; }
     const scl = 'stage' + (moving && st !== 'waiting' ? ' walk' : '')
                         + (st === 'waiting' ? ' hop wave' : '');
@@ -889,15 +1173,15 @@ function tick(t){
 
     // Idle clawds say nothing — a snoozing pane has no news, and a yard full of
     // Zzz bubbles buries the one clawd that actually needs you.
-    let show = st === 'waiting';
-    if (st === 'working') show = (now % 6) < 3.5;
-    if (st === 'idle')    show = false;
-    if (show && !c.bubbleOn) c.bubble.innerHTML = bubbleHTML(s);
+    // visibility decided above by the arbitration pass, so no two bubbles overlap
+    const show = c._okB;
+    if (show && st === 'waiting' && !c.bubbleOn) c.bubble.innerHTML = bubbleHTML(s);
     if (show !== c.bubbleOn){ c.bubble.classList.toggle('on', show); c.bubbleOn = show; }
 
-    // live working timer — recomputed each frame from the server's start epoch,
-    // so it keeps ticking between the ~1s fleet updates
-    if (st === 'working' && s.work_since){
+    // live timer off the server's state epoch, ticking between the ~1s updates:
+    // for a working pane it's how long it's run, for an idle pane how long it's
+    // snoozed. Same field (state_since); the chip colour differs by parent class.
+    if ((st === 'working' || st === 'idle') && s.work_since){
       const txt = fmtDur(Date.now()/1000 - s.work_since);
       if (txt !== c._wt){ c.wtimer.textContent = txt; c._wt = txt; }
     } else if (c._wt){ c.wtimer.textContent = ''; c._wt = ''; }
@@ -928,7 +1212,9 @@ function tick(t){
       c.state !== 'waiting' && c.state !== 'ended');
     for (let i = 0; i < arr.length; i++) for (let j = i+1; j < arr.length; j++){
       const a = arr[i], b = arr[j], dx = a.x-b.x, dy = a.y-b.y;
-      if (dx*dx + dy*dy < 72*72 && now > a.greet && now > b.greet){
+      // adjacent boxes are ~FOOT apart now, so greet at a bit past that
+      const wd = FOOT_W * 1.35;
+      if (dx*dx + dy*dy < wd*wd && now > a.greet && now > b.greet){
         a.greet = b.greet = now + 7;
         [[a,b],[b,a]].forEach(([who,other]) => {
           who.vx = who.vy = 0; who.next = now + 1.4;
@@ -950,7 +1236,7 @@ function connectFleet(){
   let ws;
   try { ws = new WebSocket(url); }
   catch(e){ status('WebSocket ctor failed: ' + e.message); return; }
-  ws.onopen  = () => { tries = 0; document.getElementById('brand').classList.add('live');
+  ws.onopen  = () => { tries = 0; unlockUI(); document.getElementById('brand').classList.add('live');
                        status('connected, waiting for data…'); };
   ws.onerror = () => status(`socket error — cannot reach ${location.host}`);
   ws.onclose = ev => {
@@ -960,8 +1246,7 @@ function connectFleet(){
     // A socket refused because the session went stale must land on the lock
     // screen, not retry forever against a server that will keep saying no.
     authState().then(a => {
-      if (!a.session) return lock('gone');
-      if (a.level !== 'verified' && a.passkey_capable) return lock('idle');
+      if (relock(a)) return;             // Face ID / token screen, whichever fits
       setTimeout(connectFleet, 2000);
     }).catch(() => setTimeout(connectFleet, 2000));
   };
@@ -1014,6 +1299,42 @@ function openSession(uuid){
     if (d.prompt !== undefined){ livePrompt = d.prompt; renderActions(); }
     paint();
   };
+  loadSummary(uuid, true);              // header brief: summary + stop condition
+  clearInterval(summaryTimer);
+  summaryTimer = setInterval(() => {
+    if (current && current.uuid === uuid &&
+        document.getElementById('s-session').classList.contains('on'))
+      loadSummary(uuid, false);
+    else { clearInterval(summaryTimer); summaryTimer = null; }
+  }, 45000);
+}
+
+/* The two-line brief under the chat header. Line 1 is a rolling summary of the
+   whole session; line 2, only while the task runs, is the condition that ends
+   it. Both come from `claude -p` server-side (cached ~45s), so the first paint
+   for a fresh pane can take a few seconds. */
+let summaryTimer = null;
+async function loadSummary(uuid, first){
+  const box = document.getElementById('sessinfo');
+  const sum = document.getElementById('ss-sum');
+  const goal = document.getElementById('ss-goal');
+  if (first){
+    box.hidden = false; box.classList.add('loading');
+    sum.textContent = 'summarising session…'; goal.hidden = true;
+  }
+  try {
+    const r = await fetch('/api/summary?uuid=' + encodeURIComponent(uuid));
+    const d = await r.json();
+    if (!current || current.uuid !== uuid) return;      // user switched panes
+    box.classList.remove('loading');
+    if (d.summary){ box.hidden = false; sum.textContent = d.summary; }
+    else if (first){ box.hidden = true; }
+    if (d.running && d.success){ goal.hidden = false; goal.textContent = d.success; }
+    else goal.hidden = true;
+  } catch(e){
+    box.classList.remove('loading');
+    if (first) box.hidden = true;
+  }
 }
 
 /* history (scrollback, sent once) sits above the live screen */
@@ -1210,11 +1531,6 @@ function renderSheet(){
       desc: t.state === 'working' ? 'is working' : (t.state || ''), cls: 'confirm',
       on: () => killPane(t.uuid, t.name || 'pane')}));
     body.appendChild(opt('cancel', {on: closeSheet}));
-    const n = document.createElement('div');
-    n.className = 'sheet-note warn';
-    n.textContent = 'Interrupts the run, exits Claude and closes the iTerm pane '
-      + 'on the Mac. There is no undo.';
-    body.appendChild(n);
   }
 
   else if (openKind === 'keys'){
@@ -1359,7 +1675,7 @@ async function post(path, body){
     body: JSON.stringify(body)
   });
   const d = await r.json().catch(()=>({}));
-  if (r.status === 401){ lock(d.relock ? 'idle' : 'gone'); throw new Error('locked'); }
+  if (r.status === 401){ authState().then(relock); throw new Error('locked'); }
   if (!r.ok) throw new Error(d.error || r.status);
   return d;
 }
@@ -1387,17 +1703,26 @@ async function key(k){
 
 const input = document.getElementById('input'), sendbtn = document.getElementById('sendbtn');
 input.addEventListener('input', () => {
-  sendbtn.disabled = !input.value.trim() || !(current && current.sendable);
+  // Enabled whenever the pane can take input — an empty box still submits
+  // whatever Claude has pre-filled in the pane (see send()).
+  sendbtn.disabled = !(current && current.sendable);
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 132) + 'px';
 });
 async function send(){
+  if (!current) return;
   const t = input.value.trim();
-  if (!t || !current) return;
   buzz(12);
   try {
-    await post('/api/send', {uuid: current.uuid, text: t, submit: true});
-    input.value = ''; input.style.height = 'auto'; sendbtn.disabled = true;
+    if (t){
+      await post('/api/send', {uuid: current.uuid, text: t, submit: true});
+      input.value = ''; input.style.height = 'auto';
+    } else {
+      // Empty box: let the server "just send it" — retype Claude's ghost
+      // suggestion and submit, or press Enter on already-typed text.
+      await post('/api/submit', {uuid: current.uuid});
+    }
+    sendbtn.disabled = !(current && current.sendable);
   } catch(e){ toast(String(e.message), true); }
 }
 
@@ -1461,9 +1786,12 @@ function showUsage(){
   document.getElementById('s-fleet').classList.remove('on');
   document.getElementById('s-session').classList.remove('on');
   document.getElementById('s-usage').classList.add('on');
-  USAGE_SIG = '';
-  renderUsage();                       // paint from the live socket immediately
-  loadUsage();
+  // Do NOT reset USAGE_SIG here. The #usage-body DOM from the last visit is still
+  // in place; keeping the sig means renderUsage repaints only when the data has
+  // actually changed, so reopening shows the previous numbers instantly and they
+  // update in place instead of blanking and snapping back.
+  renderUsage();                       // paint from cache immediately, if unchanged it's a no-op
+  loadUsage();                         // then refresh in the background
   clearInterval(usageTimer);
   usageTimer = setInterval(() => {
     if (document.getElementById('s-usage').classList.contains('on')) loadUsage();
@@ -1520,13 +1848,12 @@ function renderUsage(){
   el.innerHTML = `
     <div class="usec">
       <h3>rate limits</h3>
-      ${[['session', fh], ['7-day', sd]].map(([n, l]) => `
+      ${[['5-hour', fh], ['7-day', sd]].map(([n, l]) => `
         <div class="meter">
-          <div class="top"><span>${n === 'session' ? '5-hour' : n} <span
-            style="color:var(--dimmer)">${
-            esc(resetIn(l.resets_at))}</span></span><b>${pct(l.used_percentage)}</b></div>
+          <div class="top"><span class="k">${n}</span><b>${pct(l.used_percentage)}</b></div>
           <div class="track tall"><i style="width:${Math.min(100, l.used_percentage||0)}%;
             background:${limitColor(l.used_percentage||0)}"></i></div>
+          ${resetIn(l.resets_at) ? `<div class="rst">${esc(resetIn(l.resets_at))}</div>` : ''}
         </div>`).join('')}
     </div>
 
@@ -1634,10 +1961,26 @@ function lock(why){
   const b = document.getElementById('lock-go');
   const w = document.getElementById('lock-warn');
   document.getElementById('lock-err').textContent = '';
+  if (why === 'reconnect'){
+    t.textContent = 'Reconnecting…';
+    m.textContent = 'Waking the fleet — this reconnects on its own, no need to reopen.';
+    b.style.display = 'none';
+    document.getElementById('lock').classList.add('on');
+    return;
+  }
   if (why === 'gone'){
     t.textContent = 'Session ended';
-    m.textContent = 'Open the server URL again and paste the token to start a new one.';
-    b.style.display = 'none';
+    // A registered passkey can mint a brand-new session on its own (login/begin
+    // works with no cookie), so offer Face ID right here — no app restart, no
+    // hunting down the token. Only when no passkey exists is the token the only
+    // way back, and then we say so.
+    if (AUTH.passkey_capable && AUTH.passkey_registered){
+      m.textContent = 'Use Face ID to start a fresh session.';
+      b.style.display = ''; b.textContent = 'Log in with Face ID'; b.onclick = unlock;
+    } else {
+      m.textContent = 'Open the server URL again and paste the token to start a new one.';
+      b.style.display = 'none';
+    }
   } else if (why === 'enrol'){
     t.textContent = 'Add this phone';
     m.textContent = "Register a passkey so only your fingerprint can drive the "
@@ -1645,8 +1988,8 @@ function lock(why){
     b.style.display = ''; b.textContent = 'Register passkey'; b.onclick = enrol;
   } else {
     t.textContent = 'Locked';
-    m.textContent = 'Unlock with your passkey to reach the yard.';
-    b.style.display = ''; b.textContent = 'Unlock'; b.onclick = unlock;
+    m.textContent = 'Use Face ID to get back into the yard.';
+    b.style.display = ''; b.textContent = 'Unlock with Face ID'; b.onclick = unlock;
   }
   w.textContent = AUTH.passkey_capable ? ''
     : 'No TLS hostname on this URL, so passkeys are unavailable and the session '
@@ -1658,9 +2001,24 @@ const lockErr = e => document.getElementById('lock-err').textContent =
   String((e && e.message) || e).slice(0, 160);
 
 async function authState(){
-  try { AUTH = await (await fetch('/auth/whoami')).json(); }
-  catch(e){ AUTH = {level:'none'}; }
+  try { AUTH = await (await fetch('/auth/whoami')).json(); AUTH._ok = true; }
+  catch(e){ AUTH = {level:'none', _ok:false}; }   // server unreachable ≠ logged out
   return AUTH;
+}
+
+/* A failed reach (laptop asleep, server restarting, tailnet blip) must NOT dead-end
+   on the token screen. Show "reconnecting", keep retrying, and the moment the server
+   answers, resume — passkey unlock if the session really expired, otherwise straight
+   back into the fleet. This is what kills the close-app / reopen-URL / paste-token ritual. */
+async function revive(){
+  const a = await authState();
+  if (a._ok === false){ scheduleReconnect(); return; }      // still down — keep trying
+  if (a.level === 'verified'){ unlockUI(); started ? connectFleet() : start(); return; }
+  relock(a);                                                // truly expired → Face ID / enrol
+}
+function scheduleReconnect(){
+  clearTimeout(window.__reGate);
+  window.__reGate = setTimeout(revive, 2500);
 }
 
 async function webauthn(url, kind){
@@ -1689,19 +2047,34 @@ async function webauthn(url, kind){
 const enrol  = () => webauthn('/auth/register', 'create').catch(lockErr);
 const unlock = () => webauthn('/auth/login', 'get').catch(lockErr);
 
-/* A phone that sat in a pocket comes back locked. */
+/* Which lock screen (if any) fits the current auth state. Face ID comes FIRST:
+   a registered passkey mints a fresh session on its own, so even a fully expired
+   session (idle, 12h cap, or a server restart) gets back in with a face — never
+   a dead "session ended" with no way forward. Returns true if it showed a lock. */
+function relock(a){
+  a = a || AUTH;
+  if (a._ok === false){ lock('reconnect'); scheduleReconnect(); return true; }
+  if (a.level === 'verified') return false;
+  if (a.passkey_capable && a.passkey_registered){ lock('idle'); return true; }
+  if (!a.session){ lock('gone'); return true; }
+  if (a.passkey_capable){ lock('enrol'); return true; }
+  return false;                 // plain http on a bare IP: cookie only, nothing to unlock
+}
+
+/* A phone that sat in a pocket comes back locked. On the FIRST visit run the full
+   gate; once started, a background nap can still have expired the session server-
+   side, so re-check and drop to the Face ID unlock rather than sitting on a stale
+   "session expired" with no button. */
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !started) gate();
+  if (document.visibilityState !== 'visible') return;
+  if (!started) return gate();
+  authState().then(a => { if (a.level !== 'verified') relock(a); });
 });
 
 async function gate(){
   await authState();
   if (AUTH.level === 'verified'){ unlockUI(); return start(); }
-  // A registered passkey is enough to get back in even with no session — the
-  // unlock mints one. So offer Unlock before falling back to the token gate.
-  if (AUTH.passkey_capable && AUTH.passkey_registered) return lock('idle');
-  if (!AUTH.session) return lock('gone');
-  if (AUTH.passkey_capable) return lock('enrol');
+  if (relock(AUTH)) return;
   unlockUI(); start();          // plain http on a bare IP: cookie only, and it says so
 }
 
@@ -1713,6 +2086,7 @@ function start(){
   started = true;
   loadCommands();
   connectFleet();
+  loadUsage();          // warm the usage cache now so the first open never flashes '—'
   // deep links, for per-target home-screen shortcuts:
   //   ?screen=usage  → the dashboard
   //   ?pane=<uuid>   → straight into one session, once the fleet list arrives
